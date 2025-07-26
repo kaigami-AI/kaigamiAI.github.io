@@ -83,8 +83,10 @@
                     <option value="gray">灰色</option>
                     <option value="wood">木目調</option>
                     <option value="cork">コルクボード</option>
+                    <option value="custom">カスタム画像</option>
                 </select>
             </label>
+            <label>背景画像: <input type="file" id="bgImageLoader" accept="image/*"></label>
         </div>
         <div class="control-group">
             <button id="scaleUpBtn">全体を拡大</button>
@@ -94,8 +96,14 @@
             <button id="fillCanvasBtn">ランダム埋め</button>
         </div>
         <div class="control-group">
+            <button id="undoBtn" disabled>巻き戻し</button>
+            <button id="redoBtn" disabled>やり直し</button>
             <button id="resetBtn">リセット</button>
             <button id="downloadBtn">画像をダウンロード</button>
+        </div>
+        <div class="control-group">
+            <button id="saveSettingsBtn">設定を保存</button>
+            <button id="clearSettingsBtn">設定をクリア</button>
         </div>
     </div>
     <canvas id="myCanvas" width="800" height="600"></canvas>
@@ -117,9 +125,17 @@
         const resetBtn = document.getElementById('resetBtn');
         const aspectRatio = document.getElementById('aspectRatio');
         const backgroundColor = document.getElementById('backgroundColor');
+        const undoBtn = document.getElementById('undoBtn');
+        const redoBtn = document.getElementById('redoBtn');
+        const bgImageLoader = document.getElementById('bgImageLoader');
+        const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+        const clearSettingsBtn = document.getElementById('clearSettingsBtn');
 
         let images = [];
+        let history = [];
+        let redoStack = [];
         let selectedImage = null;
+        let customBgImage = null;
         let currentAction = ''; // 'dragging', 'rotating', 'resizing'
         let dragOffsetX, dragOffsetY;
         const handleSize = 12; 
@@ -138,17 +154,163 @@
         resetBtn.addEventListener('click', resetCanvas);
         aspectRatio.addEventListener('change', changeAspectRatio);
         backgroundColor.addEventListener('change', drawCanvas);
+        bgImageLoader.addEventListener('change', handleBgImageUpload);
+        undoBtn.addEventListener('click', undo);
+        redoBtn.addEventListener('click', redo);
+        saveSettingsBtn.addEventListener('click', saveSettings);
+        clearSettingsBtn.addEventListener('click', clearSettings);
         canvas.addEventListener('mousedown', onMouseDown);
         canvas.addEventListener('mousemove', onMouseMove);
         canvas.addEventListener('mouseup', onMouseUp);
         canvas.addEventListener('mouseleave', onMouseUp);
+        canvas.addEventListener('dragenter', handleDragEnter);
+        canvas.addEventListener('dragover', handleDragOver);
+        canvas.addEventListener('dragleave', handleDragLeave);
+        canvas.addEventListener('drop', handleDrop);
+
+        // --- Settings Management ---
+
+        function saveSettings() {
+            const settings = {
+                addBorder: addBorder.checked,
+                addPushpin: addPushpin.checked,
+                addCurledCorner: addCurledCorner.checked,
+                aspectRatio: aspectRatio.value,
+                backgroundColor: backgroundColor.value,
+                customBgImage: customBgImage ? customBgImage.src : null
+            };
+            localStorage.setItem('photoLayoutSettings', JSON.stringify(settings));
+            alert('設定を保存しました。');
+        }
+
+        function loadSettings() {
+            const savedSettings = localStorage.getItem('photoLayoutSettings');
+            if (savedSettings) {
+                const settings = JSON.parse(savedSettings);
+                addBorder.checked = settings.addBorder;
+                addPushpin.checked = settings.addPushpin;
+                addCurledCorner.checked = settings.addCurledCorner;
+                aspectRatio.value = settings.aspectRatio;
+                backgroundColor.value = settings.backgroundColor;
+
+                if (settings.customBgImage && settings.backgroundColor === 'custom') {
+                    customBgImage = new Image();
+                    customBgImage.onload = () => {
+                        changeAspectRatio(); // Apply aspect ratio and redraw
+                    };
+                    customBgImage.src = settings.customBgImage;
+                } else {
+                    changeAspectRatio(); // Apply aspect ratio and redraw
+                }
+            } else {
+                changeAspectRatio(); // Load default aspect ratio
+            }
+        }
+
+        function clearSettings() {
+            localStorage.removeItem('photoLayoutSettings');
+            alert('保存された設定をクリアしました。ページをリロードすると初期設定に戻ります。');
+        }
+
+        // --- Drag and Drop Handlers ---
+
+        function handleDragEnter(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            canvas.style.borderColor = '#007bff'; // Highlight border
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        function handleDragLeave(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            canvas.style.borderColor = '#ccc'; // Reset border
+        }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            canvas.style.borderColor = '#ccc'; // Reset border
+
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                processFiles(files);
+            }
+        }
+
+        function handleBgImageUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                customBgImage = new Image();
+                customBgImage.onload = () => {
+                    backgroundColor.value = 'custom'; // Switch to custom background
+                    drawCanvas();
+                };
+                customBgImage.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // --- History Management ---
+        canvas.addEventListener('dragenter', handleDragEnter);
+        canvas.addEventListener('dragover', handleDragOver);
+        canvas.addEventListener('dragleave', handleDragLeave);
+        canvas.addEventListener('drop', handleDrop);
+
+        // --- History Management ---
+
+        function deepCopyImages(imageArray) {
+            return imageArray.map(imageInfo => ({ ...imageInfo }));
+        }
+
+        function saveState() {
+            redoStack = []; // Clear redo stack whenever a new action is taken
+            history.push(deepCopyImages(images));
+            updateHistoryButtons();
+        }
+
+        function undo() {
+            if (history.length < 2) return; // Can't undo the initial state
+            redoStack.push(history.pop());
+            images = deepCopyImages(history[history.length - 1]);
+            selectedImage = null; // Deselect on undo
+            drawCanvas();
+            updateHistoryButtons();
+        }
+
+        function redo() {
+            if (redoStack.length === 0) return;
+            const stateToRestore = redoStack.pop();
+            history.push(stateToRestore);
+            images = deepCopyImages(stateToRestore);
+            selectedImage = null; // Deselect on redo
+            drawCanvas();
+            updateHistoryButtons();
+        }
+
+        function updateHistoryButtons() {
+            undoBtn.disabled = history.length < 2;
+            redoBtn.disabled = redoStack.length === 0;
+        }
 
         // --- Core Functions ---
 
         function handleImageUpload(event) {
-            const files = event.target.files;
-            
+            processFiles(event.target.files);
+            imageLoader.value = ''; // Reset file input
+        }
+
+        function processFiles(files) {
             for (const file of files) {
+                if (!file.type.startsWith('image/')) continue; // Skip non-images
+
                 const reader = new FileReader();
                 reader.onload = (e) => {
                     const img = new Image();
@@ -169,14 +331,13 @@
                             angle: (Math.random() - 0.5) * 0.4, // Radians
                             curlDirection: Math.random() < 0.5 ? 'left' : 'right',
                         });
-                        
+                        saveState();
                         drawCanvas(); // Redraw after each image is loaded and placed
                     };
                     img.src = e.target.result;
                 };
                 reader.readAsDataURL(file);
             }
-            imageLoader.value = ''; // Reset file input
         }
 
         function drawCanvas() {
@@ -187,11 +348,13 @@
             if (bgColor === 'transparent') {
                  ctx.clearRect(0, 0, canvas.width, canvas.height);
                  // Use a data URL for a simple checkerboard pattern
-                 canvas.style.backgroundImage = "url('data:image/svg+xml,%3Csvg width=\"20\" height=\"20\" viewBox=\"0 0 20 20\" xmlns=\"http://www.w3.org/2000/svg\"%3E%3Crect width=\"10\" height=\"10\" x=\"0\" y=\"0\" fill=\"%23f0f0f0\"%3E%3C/rect%3E%3Crect width=\"10\" height=\"10\" x=\"10\" y=\"10\" fill=\"%23f0f0f0\"%3E%3C/rect%3E%3C/svg%3E')";
+                 canvas.style.backgroundImage = "url('data:image/svg+xml,%3Csvg width=\"20\" height=\"20\" viewBox=\"0 0 20 20\" xmlns=\"http://www.w3.org/2000/svg\"%3E%3Crect width=\"10\" height=\"10\" x=\"0\" y=\"0\" fill=\"%23f0f0f0\"%3E%3C/rect%3E%3Crect width=\"10\" height=\"10\" x=\"10\" y=\"10\" fill=\"%23f0f0f0\"%3E%3C/rect%3E%3C/svg\"%3E')";
             } else if (bgColor === 'wood') {
                 drawWoodGrainBackground();
             } else if (bgColor === 'cork') {
                 drawCorkBackground();
+            } else if (bgColor === 'custom' && customBgImage) {
+                ctx.drawImage(customBgImage, 0, 0, canvas.width, canvas.height);
             } else {
                 ctx.fillStyle = bgColor;
                 ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -487,6 +650,9 @@
         }
 
         function onMouseUp(e) {
+            if (currentAction) { // Only save state if an action was performed
+                saveState();
+            }
             currentAction = '';
             updateCursor(...getMousePos(e));
         }
@@ -599,6 +765,7 @@
             images.forEach(imageInfo => {
                 imageInfo.angle = (Math.random() * 2 - 1) * maxAngle;
             });
+            saveState();
             drawCanvas();
         }
 
@@ -610,6 +777,7 @@
                 imageInfo.y = y;
                 newImages.push(imageInfo); // Add to temp array for overlap checking
             });
+            saveState();
             drawCanvas();
         }
 
@@ -628,6 +796,7 @@
 
             randomPosition(); // Reposition after scaling
             randomRotate();   // Add some rotation
+            saveState();
             drawCanvas();
         }
 
@@ -641,6 +810,7 @@
                 imageInfo.x = imageInfo.x - (imageInfo.width * (factor - 1) / factor) / 2;
                 imageInfo.y = imageInfo.y - (imageInfo.height * (factor - 1) / factor) / 2;
             });
+            saveState();
             drawCanvas();
         }
 
@@ -648,6 +818,7 @@
             images = [];
             selectedImage = null;
             currentAction = '';
+            saveState();
             drawCanvas();
         }
 
@@ -663,11 +834,15 @@
                 canvas.width = 700;
                 canvas.height = 700;
             }
+            images = [];
+            history = [[]]; // Start with an empty state
+            redoStack = [];
+            updateHistoryButtons();
             resetCanvas();
         }
         
         // Initial draw
-        changeAspectRatio();
+        loadSettings();
 
     </script>
 </body>
