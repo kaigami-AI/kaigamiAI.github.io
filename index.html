@@ -54,13 +54,7 @@
     <div class="controls">
         <div class="control-group">
             <label>画像を追加: <input type="file" id="imageLoader" multiple accept="image/*"></label>
-            <label>初期サイズ:
-                <select id="initialSize">
-                    <option value="200">小</option>
-                    <option value="300">中</option>
-                    <option value="400">大</option>
-                </select>
-            </label>
+            <label>初期サイズ: <input type="number" id="initialSize" value="300" min="50" max="1000" step="10"></label>
         </div>
         <div class="control-group">
             <label><input type="checkbox" id="addBorder" checked> 枠</label>
