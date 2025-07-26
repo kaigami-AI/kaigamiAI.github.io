@@ -62,13 +62,8 @@
             <label><input type="checkbox" id="addCurledCorner"> 角のめくれ</label>
         </div>
         <div class="control-group">
-            <label>レイアウト:
-                <select id="aspectRatio">
-                    <option value="landscape">横長</option>
-                    <option value="portrait">縦長</option>
-                    <option value="square">正方形</option>
-                </select>
-            </label>
+            <label>幅: <input type="number" id="canvasWidth" value="800" min="100" max="2000" step="10"></label>
+            <label>高さ: <input type="number" id="canvasHeight" value="600" min="100" max="2000" step="10"></label>
             <label>背景:
                 <select id="backgroundColor">
                     <option value="transparent">背景なし</option>
@@ -117,7 +112,8 @@
         const randomPositionBtn = document.getElementById('randomPositionBtn');
         const fillCanvasBtn = document.getElementById('fillCanvasBtn');
         const resetBtn = document.getElementById('resetBtn');
-        const aspectRatio = document.getElementById('aspectRatio');
+        const canvasWidthInput = document.getElementById('canvasWidth');
+        const canvasHeightInput = document.getElementById('canvasHeight');
         const backgroundColor = document.getElementById('backgroundColor');
         const undoBtn = document.getElementById('undoBtn');
         const redoBtn = document.getElementById('redoBtn');
@@ -146,7 +142,8 @@
         randomPositionBtn.addEventListener('click', randomPosition);
         fillCanvasBtn.addEventListener('click', fillCanvas);
         resetBtn.addEventListener('click', resetCanvas);
-        aspectRatio.addEventListener('change', changeAspectRatio);
+        canvasWidthInput.addEventListener('change', updateCanvasDimensions);
+        canvasHeightInput.addEventListener('change', updateCanvasDimensions);
         backgroundColor.addEventListener('change', drawCanvas);
         bgImageLoader.addEventListener('change', handleBgImageUpload);
         undoBtn.addEventListener('click', undo);
@@ -169,7 +166,8 @@
                 addBorder: addBorder.checked,
                 addPushpin: addPushpin.checked,
                 addCurledCorner: addCurledCorner.checked,
-                aspectRatio: aspectRatio.value,
+                canvasWidth: canvasWidthInput.value,
+                canvasHeight: canvasHeightInput.value,
                 backgroundColor: backgroundColor.value,
                 customBgImage: customBgImage ? customBgImage.src : null
             };
@@ -184,20 +182,21 @@
                 addBorder.checked = settings.addBorder;
                 addPushpin.checked = settings.addPushpin;
                 addCurledCorner.checked = settings.addCurledCorner;
-                aspectRatio.value = settings.aspectRatio;
+                canvasWidthInput.value = settings.canvasWidth;
+                canvasHeightInput.value = settings.canvasHeight;
                 backgroundColor.value = settings.backgroundColor;
 
                 if (settings.customBgImage && settings.backgroundColor === 'custom') {
                     customBgImage = new Image();
                     customBgImage.onload = () => {
-                        changeAspectRatio(); // Apply aspect ratio and redraw
+                        updateCanvasDimensions(); // Apply custom dimensions and redraw
                     };
                     customBgImage.src = settings.customBgImage;
                 } else {
-                    changeAspectRatio(); // Apply aspect ratio and redraw
+                    updateCanvasDimensions(); // Apply custom dimensions and redraw
                 }
             } else {
-                changeAspectRatio(); // Load default aspect ratio
+                updateCanvasDimensions(); // Load default dimensions
             }
         }
 
@@ -816,18 +815,9 @@
             drawCanvas();
         }
 
-        function changeAspectRatio() {
-            const selectedValue = aspectRatio.value;
-            if (selectedValue === 'landscape') {
-                canvas.width = 800;
-                canvas.height = 600;
-            } else if (selectedValue === 'portrait') {
-                canvas.width = 600;
-                canvas.height = 800;
-            } else if (selectedValue === 'square') {
-                canvas.width = 700;
-                canvas.height = 700;
-            }
+        function updateCanvasDimensions() {
+            canvas.width = parseInt(canvasWidthInput.value, 10);
+            canvas.height = parseInt(canvasHeightInput.value, 10);
             images = [];
             history = [[]]; // Start with an empty state
             redoStack = [];
