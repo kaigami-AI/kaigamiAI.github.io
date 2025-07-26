@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>フォトレイアウトツール</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            background-color: #f0f0f0;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 0;
+        }
+        h1 {
+            margin-top: 20px;
+        }
+        .controls {
+            margin: 20px;
+            padding: 15px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            display: flex;
+            flex-wrap: wrap; /* Allow wrapping */
+            align-items: center;
+            gap: 15px; /* Gap between groups */
+            justify-content: center; /* Center the groups */
+        }
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 10px; /* Gap within a group */
+            padding: 5px;
+            border-right: 1px solid #eee;
+        }
+        .control-group:last-child {
+            border-right: none;
+        }
+        #myCanvas {
+            border: 2px dashed #ccc;
+            background-color: #fff;
+            cursor: grab;
+        }
+        button, label {
+            cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>フォトレイアウトツール</h1>
+    <div class="controls">
+        <div class="control-group">
+            <label>画像を追加: <input type="file" id="imageLoader" multiple accept="image/*"></label>
+            <label>初期サイズ:
+                <select id="initialSize">
+                    <option value="200">小</option>
+                    <option value="300">中</option>
+                    <option value="400">大</option>
+                </select>
+            </label>
+        </div>
+        <div class="control-group">
+            <label><input type="checkbox" id="addBorder" checked> 枠</label>
+            <label><input type="checkbox" id="addPushpin"> 画鋲</label>
+            <label><input type="checkbox" id="addCurledCorner"> 角のめくれ</label>
+        </div>
+        <div class="control-group">
+            <label>レイアウト:
+                <select id="aspectRatio">
+                    <option value="landscape">横長</option>
+                    <option value="portrait">縦長</option>
+                    <option value="square">正方形</option>
+                </select>
+            </label>
+            <label>背景:
+                <select id="backgroundColor">
+                    <option value="transparent">背景なし</option>
+                    <option value="white">白</option>
+                    <option value="black">黒</option>
+                    <option value="gray">灰色</option>
+                    <option value="wood">木目調</option>
+                    <option value="cork">コルクボード</option>
+                    <option value="custom">カスタム画像</option>
+                </select>
+            </label>
+            <label>背景画像: <input type="file" id="bgImageLoader" accept="image/*"></label>
+        </div>
+        <div class="control-group">
+            <button id="scaleUpBtn">全体を拡大</button>
+            <button id="scaleDownBtn">全体を縮小</button>
+            <button id="randomRotateBtn">ランダム回転</button>
+            <button id="randomPositionBtn">ランダム位置</button>
+            <button id="fillCanvasBtn">ランダム埋め</button>
+        </div>
+        <div class="control-group">
+            <button id="undoBtn" disabled>巻き戻し</button>
+            <button id="redoBtn" disabled>やり直し</button>
+            <button id="resetBtn">リセット</button>
+            <button id="downloadBtn">画像をダウンロード</button>
+        </div>
+        <div class="control-group">
+            <button id="saveSettingsBtn">設定を保存</button>
+            <button id="clearSettingsBtn">設定をクリア</button>
+        </div>
+    </div>
+    <canvas id="myCanvas" width="800" height="600"></canvas>
+
+    <script>
+        const canvas = document.getElementById('myCanvas');
+        const ctx = canvas.getContext('2d');
+        const imageLoader = document.getElementById('imageLoader');
+        const addBorder = document.getElementById('addBorder');
+        const addPushpin = document.getElementById('addPushpin');
+        const addCurledCorner = document.getElementById('addCurledCorner');
+        const initialSize = document.getElementById('initialSize');
+        const downloadBtn = document.getElementById('downloadBtn');
+        const scaleUpBtn = document.getElementById('scaleUpBtn');
+        const scaleDownBtn = document.getElementById('scaleDownBtn');
+        const randomRotateBtn = document.getElementById('randomRotateBtn');
+        const randomPositionBtn = document.getElementById('randomPositionBtn');
+        const fillCanvasBtn = document.getElementById('fillCanvasBtn');
+        const resetBtn = document.getElementById('resetBtn');
+        const aspectRatio = document.getElementById('aspectRatio');
+        const backgroundColor = document.getElementById('backgroundColor');
+        const undoBtn = document.getElementById('undoBtn');
+        const redoBtn = document.getElementById('redoBtn');
+        const bgImageLoader = document.getElementById('bgImageLoader');
+        const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+        const clearSettingsBtn = document.getElementById('clearSettingsBtn');
+
+        let images = [];
+        let history = [];
+        let redoStack = [];
+        let selectedImage = null;
+        let customBgImage = null;
+        let currentAction = ''; // 'dragging', 'rotating', 'resizing'
+        let dragOffsetX, dragOffsetY;
+        const handleSize = 12; 
+
+        // --- Event Listeners ---
+        imageLoader.addEventListener('change', handleImageUpload);
+        addBorder.addEventListener('change', drawCanvas);
+        addPushpin.addEventListener('change', drawCanvas);
+        addCurledCorner.addEventListener('change', drawCanvas);
+        downloadBtn.addEventListener('click', downloadImage);
+        scaleUpBtn.addEventListener('click', () => scaleAllImages(1.1));
+        scaleDownBtn.addEventListener('click', () => scaleAllImages(0.9));
+        randomRotateBtn.addEventListener('click', randomRotate);
+        randomPositionBtn.addEventListener('click', randomPosition);
+        fillCanvasBtn.addEventListener('click', fillCanvas);
+        resetBtn.addEventListener('click', resetCanvas);
+        aspectRatio.addEventListener('change', changeAspectRatio);
+        backgroundColor.addEventListener('change', drawCanvas);
+        bgImageLoader.addEventListener('change', handleBgImageUpload);
+        undoBtn.addEventListener('click', undo);
+        redoBtn.addEventListener('click', redo);
+        saveSettingsBtn.addEventListener('click', saveSettings);
+        clearSettingsBtn.addEventListener('click', clearSettings);
+        canvas.addEventListener('mousedown', onMouseDown);
+        canvas.addEventListener('mousemove', onMouseMove);
+        canvas.addEventListener('mouseup', onMouseUp);
+        canvas.addEventListener('mouseleave', onMouseUp);
+        canvas.addEventListener('dragenter', handleDragEnter);
+        canvas.addEventListener('dragover', handleDragOver);
+        canvas.addEventListener('dragleave', handleDragLeave);
+        canvas.addEventListener('drop', handleDrop);
+
+        // --- Settings Management ---
+
+        function saveSettings() {
+            const settings = {
+                addBorder: addBorder.checked,
+                addPushpin: addPushpin.checked,
+                addCurledCorner: addCurledCorner.checked,
+                aspectRatio: aspectRatio.value,
+                backgroundColor: backgroundColor.value,
+                customBgImage: customBgImage ? customBgImage.src : null
+            };
+            localStorage.setItem('photoLayoutSettings', JSON.stringify(settings));
+            alert('設定を保存しました。');
+        }
+
+        function loadSettings() {
+            const savedSettings = localStorage.getItem('photoLayoutSettings');
+            if (savedSettings) {
+                const settings = JSON.parse(savedSettings);
+                addBorder.checked = settings.addBorder;
+                addPushpin.checked = settings.addPushpin;
+                addCurledCorner.checked = settings.addCurledCorner;
+                aspectRatio.value = settings.aspectRatio;
+                backgroundColor.value = settings.backgroundColor;
+
+                if (settings.customBgImage && settings.backgroundColor === 'custom') {
+                    customBgImage = new Image();
+                    customBgImage.onload = () => {
+                        changeAspectRatio(); // Apply aspect ratio and redraw
+                    };
+                    customBgImage.src = settings.customBgImage;
+                } else {
+                    changeAspectRatio(); // Apply aspect ratio and redraw
+                }
+            } else {
+                changeAspectRatio(); // Load default aspect ratio
+            }
+        }
+
+        function clearSettings() {
+            localStorage.removeItem('photoLayoutSettings');
+            alert('保存された設定をクリアしました。ページをリロードすると初期設定に戻ります。');
+        }
+
+        // --- Drag and Drop Handlers ---
+
+        function handleDragEnter(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            canvas.style.borderColor = '#007bff'; // Highlight border
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
+
+        function handleDragLeave(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            canvas.style.borderColor = '#ccc'; // Reset border
+        }
+
+        function handleDrop(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            canvas.style.borderColor = '#ccc'; // Reset border
+
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                processFiles(files);
+            }
+        }
+
+        function handleBgImageUpload(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                customBgImage = new Image();
+                customBgImage.onload = () => {
+                    backgroundColor.value = 'custom'; // Switch to custom background
+                    drawCanvas();
+                };
+                customBgImage.src = e.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // --- History Management ---
+        canvas.addEventListener('dragenter', handleDragEnter);
+        canvas.addEventListener('dragover', handleDragOver);
+        canvas.addEventListener('dragleave', handleDragLeave);
+        canvas.addEventListener('drop', handleDrop);
+
+        // --- History Management ---
+
+        function deepCopyImages(imageArray) {
+            return imageArray.map(imageInfo => ({ ...imageInfo }));
+        }
+
+        function saveState() {
+            redoStack = []; // Clear redo stack whenever a new action is taken
+            history.push(deepCopyImages(images));
+            updateHistoryButtons();
+        }
+
+        function undo() {
+            if (history.length < 2) return; // Can't undo the initial state
+            redoStack.push(history.pop());
+            images = deepCopyImages(history[history.length - 1]);
+            selectedImage = null; // Deselect on undo
+            drawCanvas();
+            updateHistoryButtons();
+        }
+
+        function redo() {
+            if (redoStack.length === 0) return;
+            const stateToRestore = redoStack.pop();
+            history.push(stateToRestore);
+            images = deepCopyImages(stateToRestore);
+            selectedImage = null; // Deselect on redo
+            drawCanvas();
+            updateHistoryButtons();
+        }
+
+        function updateHistoryButtons() {
+            undoBtn.disabled = history.length < 2;
+            redoBtn.disabled = redoStack.length === 0;
+        }
+
+        // --- Core Functions ---
+
+        function handleImageUpload(event) {
+            processFiles(event.target.files);
+            imageLoader.value = ''; // Reset file input
+        }
+
+        function processFiles(files) {
+            for (const file of files) {
+                if (!file.type.startsWith('image/')) continue; // Skip non-images
+
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const img = new Image();
+                    img.onload = () => {
+                        const maxSize = parseInt(initialSize.value, 10);
+                        const scale = Math.min(maxSize / img.width, maxSize / img.height);
+                        const imgWidth = img.width * scale;
+                        const imgHeight = img.height * scale;
+                        
+                        const { x, y } = findBestPosition(imgWidth, imgHeight, images);
+
+                        images.push({
+                            img: img,
+                            x: x,
+                            y: y,
+                            width: imgWidth,
+                            height: imgHeight,
+                            angle: (Math.random() - 0.5) * 0.4, // Radians
+                            curlDirection: Math.random() < 0.5 ? 'left' : 'right',
+                        });
+                        saveState();
+                        drawCanvas(); // Redraw after each image is loaded and placed
+                    };
+                    img.src = e.target.result;
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function drawCanvas() {
+            // Set background
+            const bgColor = backgroundColor.value;
+            canvas.style.backgroundImage = 'none'; // Reset any previous background image
+
+            if (bgColor === 'transparent') {
+                 ctx.clearRect(0, 0, canvas.width, canvas.height);
+                 // Use a data URL for a simple checkerboard pattern
+                 canvas.style.backgroundImage = "url('data:image/svg+xml,%3Csvg width=\"20\" height=\"20\" viewBox=\"0 0 20 20\" xmlns=\"http://www.w3.org/2000/svg\"%3E%3Crect width=\"10\" height=\"10\" x=\"0\" y=\"0\" fill=\"%23f0f0f0\"%3E%3C/rect%3E%3Crect width=\"10\" height=\"10\" x=\"10\" y=\"10\" fill=\"%23f0f0f0\"%3E%3C/rect%3E%3C/svg\"%3E')";
+            } else if (bgColor === 'wood') {
+                drawWoodGrainBackground();
+            } else if (bgColor === 'cork') {
+                drawCorkBackground();
+            } else if (bgColor === 'custom' && customBgImage) {
+                ctx.drawImage(customBgImage, 0, 0, canvas.width, canvas.height);
+            } else {
+                ctx.fillStyle = bgColor;
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }
+
+            images.forEach(imageInfo => {
+                drawImageWithBorder(imageInfo);
+            });
+            
+            if (selectedImage) {
+                drawHandles(selectedImage);
+            }
+        }
+
+        function drawWoodGrainBackground() {
+            // Brighter procedural wood grain
+            const baseColor = '#D2B48C'; // Tan
+            const grainColor1 = '#BC8F8F'; // RosyBrown
+            const grainColor2 = '#A0522D'; // Sienna
+
+            ctx.fillStyle = baseColor;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            for (let i = 0; i < 400; i++) { // Increased density
+                const x = Math.random() * canvas.width;
+                const y = Math.random() * canvas.height;
+                const length = Math.random() * 200 + 80;
+                const angle = (Math.random() - 0.5) * 0.15;
+                const width = Math.random() * 2.5 + 0.5;
+
+                ctx.save();
+                ctx.translate(x, y);
+                ctx.rotate(angle);
+                ctx.fillStyle = Math.random() < 0.6 ? grainColor1 : grainColor2;
+                ctx.globalAlpha = Math.random() * 0.25 + 0.05; // More subtle
+                ctx.fillRect(-length / 2, -width / 2, length, width);
+                ctx.restore();
+            }
+        }
+
+        function drawCorkBackground() {
+            const baseColor = '#D2B48C'; // Tan - base cork color
+            ctx.fillStyle = baseColor;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            // Create speckles
+            for (let i = 0; i < 20000; i++) { // High density for speckles
+                const x = Math.random() * canvas.width;
+                const y = Math.random() * canvas.height;
+                const radius = Math.random() * 1.5 + 0.5;
+                const lightness = Math.random() * 0.4 - 0.2; // -0.2 to +0.2
+                
+                // Simple way to get darker/lighter shades of the base color
+                const speckleColor = `hsl(34, 59%, ${50 + lightness * 40}%`;
+
+                ctx.fillStyle = speckleColor;
+                ctx.globalAlpha = Math.random() * 0.5 + 0.3;
+                ctx.beginPath();
+                ctx.arc(x, y, radius, 0, Math.PI * 2);
+                ctx.fill();
+            }
+            ctx.globalAlpha = 1.0;
+        }
+        
+        function drawImageWithBorder(imageInfo){
+            ctx.save();
+            ctx.translate(imageInfo.x + imageInfo.width / 2, imageInfo.y + imageInfo.height / 2);
+            ctx.rotate(imageInfo.angle);
+
+            const halfW = imageInfo.width / 2;
+            const halfH = imageInfo.height / 2;
+            const borderSize = addBorder.checked ? 5 : 0;
+            const totalHalfW = halfW + borderSize;
+            const totalHalfH = halfH + borderSize;
+
+            // --- Clipping for curled corner ---
+            if (addCurledCorner.checked) {
+                const curlSize = 30;
+                ctx.beginPath();
+                if (imageInfo.curlDirection === 'right') {
+                    ctx.moveTo(-totalHalfW, -totalHalfH);
+                    ctx.lineTo(totalHalfW, -totalHalfH);
+                    ctx.lineTo(totalHalfW, totalHalfH - curlSize);
+                    ctx.quadraticCurveTo(totalHalfW, totalHalfH, totalHalfW - curlSize, totalHalfH);
+                    ctx.lineTo(-totalHalfW, totalHalfH);
+                } else {
+                    ctx.moveTo(totalHalfW, -totalHalfH);
+                    ctx.lineTo(-totalHalfW, -totalHalfH);
+                    ctx.lineTo(-totalHalfW, totalHalfH - curlSize);
+                    ctx.quadraticCurveTo(-totalHalfW, totalHalfH, -totalHalfW + curlSize, totalHalfH);
+                    ctx.lineTo(totalHalfW, totalHalfH);
+                }
+                ctx.closePath();
+                ctx.clip();
+            }
+
+            // --- Draw border and image ---
+            if (addBorder.checked) {
+                ctx.shadowColor = 'rgba(0,0,0,0.4)';
+                ctx.shadowBlur = 15;
+                ctx.shadowOffsetX = 3;
+                ctx.shadowOffsetY = 4;
+                ctx.fillStyle = 'white';
+                ctx.fillRect(-totalHalfW, -totalHalfH, imageInfo.width + borderSize * 2, imageInfo.height + borderSize * 2);
+            }
+            
+            ctx.shadowColor = 'transparent';
+            ctx.drawImage(imageInfo.img, -halfW, -halfH, imageInfo.width, imageInfo.height);
+            
+            ctx.restore(); // Restore from translate/rotate/clip to draw effects on top
+
+            // --- Draw effects (must be done after restoring transform) ---
+            ctx.save();
+            ctx.translate(imageInfo.x + imageInfo.width / 2, imageInfo.y + imageInfo.height / 2);
+            ctx.rotate(imageInfo.angle);
+
+            if (addCurledCorner.checked) {
+                drawCurledCorner(imageInfo, borderSize);
+            }
+
+            if (addPushpin.checked) {
+                drawPushpin(imageInfo, borderSize);
+            }
+
+            ctx.restore();
+        }
+
+        function drawPushpin(imageInfo, borderSize) {
+            const pinRadius = 8;
+            ctx.save();
+            ctx.translate(0, -(imageInfo.height / 2) - borderSize + pinRadius / 2);
+
+            const grad = ctx.createRadialGradient(0, 0, 1, 0, 0, pinRadius);
+            grad.addColorStop(0, '#ff8888');
+            grad.addColorStop(0.5, '#dd2222');
+            grad.addColorStop(1, '#880000');
+            ctx.fillStyle = grad;
+            ctx.shadowColor = 'rgba(0,0,0,0.5)';
+            ctx.shadowBlur = 5;
+            ctx.shadowOffsetX = 2;
+            ctx.shadowOffsetY = 2;
+            ctx.beginPath();
+            ctx.arc(0, 0, pinRadius, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        function drawCurledCorner(imageInfo, borderSize) {
+            const curlSize = 30;
+            const totalHalfW = imageInfo.width / 2 + borderSize;
+            const totalHalfH = imageInfo.height / 2 + borderSize;
+
+            ctx.save();
+            ctx.shadowColor = 'rgba(0,0,0,0.5)';
+            ctx.shadowBlur = 10;
+            ctx.shadowOffsetX = -5;
+            ctx.shadowOffsetY = 5;
+
+            ctx.beginPath();
+            if (imageInfo.curlDirection === 'right') {
+                ctx.moveTo(totalHalfW - curlSize, totalHalfH);
+                ctx.quadraticCurveTo(totalHalfW, totalHalfH, totalHalfW, totalHalfH - curlSize);
+            } else { // left
+                ctx.moveTo(-totalHalfW + curlSize, totalHalfH);
+                ctx.quadraticCurveTo(-totalHalfW, totalHalfH, -totalHalfW, totalHalfH - curlSize);
+            }
+            ctx.strokeStyle = 'rgba(0,0,0,0.2)'; // Thin dark line for depth
+            ctx.stroke();
+
+            const grad = ctx.createLinearGradient(0, 0, 
+                imageInfo.curlDirection === 'right' ? totalHalfW : -totalHalfW, totalHalfH);
+            grad.addColorStop(0, '#f9f9f9');
+            grad.addColorStop(1, '#e0e0e0');
+            ctx.fillStyle = grad;
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        function drawHandles(imageInfo) {
+            ctx.save();
+            ctx.translate(imageInfo.x + imageInfo.width / 2, imageInfo.y + imageInfo.height / 2);
+            ctx.rotate(imageInfo.angle);
+
+            const halfW = imageInfo.width / 2;
+            const halfH = imageInfo.height / 2;
+
+            // Selection outline
+            ctx.strokeStyle = '#007bff';
+            ctx.lineWidth = 2;
+            ctx.setLineDash([5, 3]);
+            ctx.strokeRect(-halfW, -halfH, imageInfo.width, imageInfo.height);
+            ctx.setLineDash([]);
+
+            // Rotation handle (top right)
+            ctx.fillStyle = '#dc3545';
+            ctx.beginPath();
+            ctx.arc(halfW, -halfH, handleSize / 1.5, 0, Math.PI * 2);
+            ctx.fill();
+
+            // Resize handle (bottom right)
+            ctx.fillStyle = '#007bff';
+            ctx.fillRect(halfW - handleSize / 2, halfH - handleSize / 2, handleSize, handleSize);
+            
+            ctx.restore();
+        }
+
+        // --- Mouse Event Handlers ---
+
+        function onMouseDown(e) {
+            const [mouseX, mouseY] = getMousePos(e);
+            let clickedOnImage = false;
+
+            // Check from top-most image to bottom
+            for (let i = images.length - 1; i >= 0; i--) {
+                const imageInfo = images[i];
+                const handle = getHandleAt(mouseX, mouseY, imageInfo);
+
+                if (handle) {
+                    selectedImage = imageInfo;
+                    currentAction = handle;
+                    clickedOnImage = true;
+                    // Store original state for rotation/resizing
+                    dragOffsetX = mouseX;
+                    dragOffsetY = mouseY;
+                    break;
+                } else if (isPointInImage(mouseX, mouseY, imageInfo)) {
+                    selectedImage = imageInfo;
+                    currentAction = 'dragging';
+                    clickedOnImage = true;
+                    dragOffsetX = mouseX - selectedImage.x;
+                    dragOffsetY = mouseY - selectedImage.y;
+                    break;
+                }
+            }
+
+            if (clickedOnImage) {
+                // Bring the selected image to the top of the stack
+                const index = images.indexOf(selectedImage);
+                if (index !== -1) {
+                    images.splice(index, 1);
+                    images.push(selectedImage);
+                }
+            } else {
+                selectedImage = null;
+                currentAction = '';
+            }
+
+            drawCanvas();
+        }
+
+        function onMouseMove(e) {
+            const [mouseX, mouseY] = getMousePos(e);
+            
+            if (currentAction) {
+                // An action is in progress (dragging, rotating, etc.)
+                const image = selectedImage;
+                const centerX = image.x + image.width / 2;
+                const centerY = image.y + image.height / 2;
+
+                if (currentAction === 'dragging') {
+                    image.x = mouseX - dragOffsetX;
+                    image.y = mouseY - dragOffsetY;
+                } else if (currentAction === 'rotating') {
+                    const newAngle = Math.atan2(mouseY - centerY, mouseX - centerX);
+                    image.angle = newAngle;
+                } else if (currentAction === 'resizing') {
+                    const dx = mouseX - centerX;
+                    const dy = mouseY - centerY;
+                    // Project mouse position onto the rotated corner vector
+                    const angle = image.angle;
+                    const cos = Math.cos(angle);
+                    const sin = Math.sin(angle);
+                    const aspect = image.height / image.width;
+
+                    // Simplified: base new width on distance from center
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    const diag = Math.sqrt(Math.pow(image.width/2, 2) + Math.pow(image.height/2, 2));
+                    const scale = dist / diag;
+                    
+                    const newWidth = Math.abs(image.width * scale);
+                    if (newWidth > 20) { // Minimum size
+                       image.width = newWidth;
+                       image.height = newWidth * aspect;
+                    }
+                }
+                drawCanvas();
+            } else {
+                // No action, just update cursor
+                updateCursor(mouseX, mouseY);
+            }
+        }
+
+        function onMouseUp(e) {
+            if (currentAction) { // Only save state if an action was performed
+                saveState();
+            }
+            currentAction = '';
+            updateCursor(...getMousePos(e));
+        }
+        
+        function updateCursor(mouseX, mouseY) {
+            let newCursor = 'grab';
+            if (selectedImage) {
+                const handle = getHandleAt(mouseX, mouseY, selectedImage);
+                if (handle === 'rotating') newCursor = 'crosshair';
+                else if (handle === 'resizing') newCursor = 'nwse-resize';
+                else if (isPointInImage(mouseX, mouseY, selectedImage)) newCursor = 'move';
+            }
+            canvas.style.cursor = newCursor;
+        }
+
+        // --- Helper Functions ---
+
+        function getMousePos(e) {
+            const rect = canvas.getBoundingClientRect();
+            return [e.clientX - rect.left, e.clientY - rect.top];
+        }
+
+        function isPointInImage(x, y, imageInfo) {
+            const [localX, localY] = getLocalCoordinates(x, y, imageInfo);
+            return Math.abs(localX) < imageInfo.width / 2 && Math.abs(localY) < imageInfo.height / 2;
+        }
+
+        function getHandleAt(x, y, imageInfo) {
+            const [localX, localY] = getLocalCoordinates(x, y, imageInfo);
+            const halfW = imageInfo.width / 2;
+            const halfH = imageInfo.height / 2;
+            
+            // Check rotation handle (top right)
+            if (Math.sqrt(Math.pow(localX - halfW, 2) + Math.pow(localY - (-halfH), 2)) < handleSize) {
+                return 'rotating';
+            }
+            // Check resize handle (bottom right)
+            if (Math.abs(localX - halfW) < handleSize && Math.abs(localY - halfH) < handleSize) {
+                return 'resizing';
+            }
+            return null;
+        }
+
+        function getLocalCoordinates(x, y, imageInfo) {
+            const dx = x - (imageInfo.x + imageInfo.width / 2);
+            const dy = y - (imageInfo.y + imageInfo.height / 2);
+            const angle = -imageInfo.angle;
+            const localX = dx * Math.cos(angle) - dy * Math.sin(angle);
+            const localY = dx * Math.sin(angle) + dy * Math.cos(angle);
+            return [localX, localY];
+        }
+
+        function findBestPosition(newWidth, newHeight, existingImages = images) {
+            if (images.length === 0) {
+                return { 
+                    x: Math.random() * (canvas.width - newWidth),
+                    y: Math.random() * (canvas.height - newHeight)
+                };
+            }
+
+            let bestPos = { x: 0, y: 0 };
+            let minOverlap = Infinity;
+
+            for (let i = 0; i < 100; i++) { // Try 100 random positions
+                const candidate = {
+                    x: Math.random() * (canvas.width - newWidth),
+                    y: Math.random() * (canvas.height - newHeight),
+                    width: newWidth,
+                    height: newHeight
+                };
+
+                let currentOverlap = 0;
+                for (const existingImage of existingImages) {
+                    currentOverlap += getOverlapArea(candidate, existingImage);
+                }
+
+                if (currentOverlap < minOverlap) {
+                    minOverlap = currentOverlap;
+                    bestPos = { x: candidate.x, y: candidate.y };
+                }
+
+                if (minOverlap === 0) break; // Found a perfect spot
+            }
+
+            return bestPos;
+        }
+
+        function getOverlapArea(rect1, rect2) {
+            const x_overlap = Math.max(0, Math.min(rect1.x + rect1.width, rect2.x + rect2.width) - Math.max(rect1.x, rect2.x));
+            const y_overlap = Math.max(0, Math.min(rect1.y + rect1.height, rect2.y + rect2.height) - Math.max(rect1.y, rect2.y));
+            return x_overlap * y_overlap;
+        }
+
+        function downloadImage() {
+            const tempSelected = selectedImage;
+            selectedImage = null; // Hide handles for download
+            drawCanvas();
+
+            const link = document.createElement('a');
+            link.download = 'photo-layout.png';
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+            
+            selectedImage = tempSelected; // Restore selection
+            drawCanvas();
+        }
+
+        function randomRotate() {
+            const maxAngle = 30 * (Math.PI / 180); // 30 degrees in radians
+            images.forEach(imageInfo => {
+                imageInfo.angle = (Math.random() * 2 - 1) * maxAngle;
+            });
+            saveState();
+            drawCanvas();
+        }
+
+        function randomPosition() {
+            const newImages = [];
+            images.forEach(imageInfo => {
+                const { x, y } = findBestPosition(imageInfo.width, imageInfo.height, newImages);
+                imageInfo.x = x;
+                imageInfo.y = y;
+                newImages.push(imageInfo); // Add to temp array for overlap checking
+            });
+            saveState();
+            drawCanvas();
+        }
+
+        function fillCanvas() {
+            if (images.length === 0) return;
+
+            // Simple strategy: Enlarge and reposition images to cover the canvas
+            const canvasArea = canvas.width * canvas.height;
+            const imageArea = images.reduce((acc, img) => acc + (img.width * img.height), 0);
+            const scaleFactor = Math.sqrt(canvasArea / imageArea) * 1.2; // *1.2 to ensure overlap
+
+            images.forEach(imageInfo => {
+                imageInfo.width *= scaleFactor;
+                imageInfo.height *= scaleFactor;
+            });
+
+            randomPosition(); // Reposition after scaling
+            randomRotate();   // Add some rotation
+            saveState();
+            drawCanvas();
+        }
+
+        function scaleAllImages(factor) {
+            images.forEach(imageInfo => {
+                // Scale the image
+                imageInfo.width *= factor;
+                imageInfo.height *= factor;
+
+                // Adjust position to keep center point the same
+                imageInfo.x = imageInfo.x - (imageInfo.width * (factor - 1) / factor) / 2;
+                imageInfo.y = imageInfo.y - (imageInfo.height * (factor - 1) / factor) / 2;
+            });
+            saveState();
+            drawCanvas();
+        }
+
+        function resetCanvas() {
+            images = [];
+            selectedImage = null;
+            currentAction = '';
+            saveState();
+            drawCanvas();
+        }
+
+        function changeAspectRatio() {
+            const selectedValue = aspectRatio.value;
+            if (selectedValue === 'landscape') {
+                canvas.width = 800;
+                canvas.height = 600;
+            } else if (selectedValue === 'portrait') {
+                canvas.width = 600;
+                canvas.height = 800;
+            } else if (selectedValue === 'square') {
+                canvas.width = 700;
+                canvas.height = 700;
+            }
+            images = [];
+            history = [[]]; // Start with an empty state
+            redoStack = [];
+            updateHistoryButtons();
+            resetCanvas();
+        }
+        
+        // Initial draw
+        loadSettings();
+
+    </script>
+</body>
+</html>
